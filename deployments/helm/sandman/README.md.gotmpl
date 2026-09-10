@@ -99,7 +99,46 @@ through the environment, so it does not appear in `kubectl describe pod`.
 
 `api.readOnly=true` refuses every state-changing route outright, which is what
 you want for an instance behind a dashboard. The chart refuses to publish an
-unauthenticated write API through an Ingress.
+unauthenticated write API through a Gateway.
+
+## Publishing the API
+
+Outside the cluster, the API is published with a Gateway API HTTPRoute:
+
+```yaml
+httpRoute:
+  enabled: true
+  parentRefs:
+    - name: external
+      namespace: gateway-system
+      sectionName: https
+  hostnames:
+    - sandman.example.com
+  matches:
+    - path:
+        type: PathPrefix
+        value: /api/
+```
+
+`parentRefs` is required — a route with no parent attaches to no Gateway, is
+admitted by nothing, and serves no traffic without ever reporting an error, so
+the chart refuses to render one. For a Gateway in another namespace, that
+Gateway's listener also has to allow routes from this one in its
+`allowedRoutes`; the route naming a parent is only half of the binding.
+
+The Gateway itself is not part of this chart. It is cluster infrastructure with
+its own lifecycle, usually shared between releases, and TLS and the listener's
+hostnames belong to it rather than here — which is the main practical
+difference from the Ingress this replaced.
+
+The default `matches` publishes `/`, which is the whole surface: the API, the
+landing page, `/healthz`, `/readyz` and `/metrics`. A prefix of `/api/`
+publishes only the API and leaves the probes and metrics reachable inside the
+cluster alone. Set `httpRoute.rules` to replace the generated rule entirely if
+you need something the single-rule shape cannot express.
+
+`httpRoute.apiVersion` defaults to `gateway.networking.k8s.io/v1`; set it to
+`v1beta1` for an older Gateway API installation.
 
 ## Privileged shutdown pods
 

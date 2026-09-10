@@ -116,8 +116,16 @@ Fail early on value combinations that produce a broken release.
 {{- if and (not .Values.hostNetwork) (not .Values.crds.install) }}
 {{- /* nothing: this combination is fine, it is only listed to keep the guards together */ -}}
 {{- end }}
-{{- if and .Values.ingress.enabled (not .Values.api.token) (not .Values.api.existingSecret) (not .Values.api.readOnly) }}
-{{- fail "sandman: refusing to publish an unauthenticated write API through an Ingress. Set api.token, api.existingSecret, or api.readOnly=true." }}
+{{- if .Values.httpRoute.enabled }}
+{{- if not .Values.httpRoute.parentRefs }}
+{{- fail "sandman: httpRoute.enabled needs httpRoute.parentRefs. A route with no parent is attached to no Gateway, is admitted by nothing, and serves no traffic without ever reporting an error." }}
+{{- end }}
+{{- if and (not .Values.api.token) (not .Values.api.existingSecret) (not .Values.api.readOnly) }}
+{{- fail "sandman: refusing to publish an unauthenticated write API through a Gateway. Set api.token, api.existingSecret, or api.readOnly=true." }}
+{{- end }}
+{{- end }}
+{{- if .Values.ingress }}
+{{- fail "sandman: `ingress` was replaced by `httpRoute`, which attaches the API to a Gateway API Gateway. Move `ingress.hosts[].host` to `httpRoute.hostnames`, name the Gateway in `httpRoute.parentRefs`, and drop `ingress` -- TLS and the class now belong to the Gateway's listener rather than to this chart." }}
 {{- end }}
 {{- if and (gt (int .Values.replicaCount) 1) (not .Values.controller.leaderElection) }}
 {{- fail "sandman: more than one replica without leader election means two controllers draining the same node at once. Set controller.leaderElection=true or replicaCount=1." }}

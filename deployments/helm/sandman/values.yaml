@@ -108,21 +108,49 @@ service:
   # -- Annotations for the Service.
   annotations: {}
 
-ingress:
-  # -- Expose the REST API through an Ingress. Think about `api.token` first.
+httpRoute:
+  # -- Expose the REST API through a Gateway API HTTPRoute. Think about
+  # `api.token` first: the chart refuses to publish a write API that anything
+  # reaching the Gateway could use.
   enabled: false
-  # -- Ingress class.
-  className: ""
-  # -- Annotations for the Ingress.
+  # -- API version of the HTTPRoute. `gateway.networking.k8s.io/v1` is the
+  # stable version; older Gateway API installations still serve `v1beta1`.
+  apiVersion: gateway.networking.k8s.io/v1
+  # -- Gateways this route attaches to. Required when enabled: a route with no
+  # parent is attached to no Gateway, is admitted by nothing, and serves no
+  # traffic without ever reporting an error. `namespace` is only needed for a
+  # Gateway outside the release namespace, and that Gateway must allow routes
+  # from this one in its `allowedRoutes`.
+  parentRefs: []
+  #  - name: external
+  #    namespace: gateway-system
+  #    sectionName: https
+  # -- Hostnames this route answers on. Empty inherits whatever the Gateway
+  # listener allows, which for a shared Gateway is usually not what you want.
+  hostnames: []
+  #  - sandman.example.com
+  # -- Matches for the default rule. The API lives under /api/v1, so a prefix
+  # of / also publishes the landing page, the probes and /metrics; narrow this
+  # to /api/ to publish only the API.
+  matches:
+    - path:
+        type: PathPrefix
+        value: /
+  # -- Filters applied to the default rule, for header manipulation, redirects
+  # or a URL rewrite.
+  filters: []
+  # -- Timeouts for the default rule. A start or stop request returns as soon
+  # as it is recorded, so these only ever cover a cache read or a single patch.
+  timeouts: {}
+  #  request: 10s
+  # -- Complete rule list, replacing the default rule built from `matches`,
+  # `filters` and `timeouts`. Use this for anything the single-rule shape
+  # cannot express; `backendRefs` then has to name the Service itself.
+  rules: []
+  # -- Extra labels for the HTTPRoute.
+  labels: {}
+  # -- Annotations for the HTTPRoute.
   annotations: {}
-  # -- Hosts and paths.
-  hosts:
-    - host: sandman.local
-      paths:
-        - path: /
-          pathType: Prefix
-  # -- TLS configuration.
-  tls: []
 
 # -- SandmanDevices to create with the release. Handy for a small fleet
 # described in one values file; a larger one is usually better off with the

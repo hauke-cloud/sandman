@@ -159,7 +159,9 @@ helm-template: ## Render the chart with every optional resource enabled
 	  --set api.token=render \
 	  --set metrics.serviceMonitor.enabled=true \
 	  --set metrics.prometheusRule.enabled=true \
-	  --set metrics.grafanaDashboard.enabled=true
+	  --set metrics.grafanaDashboard.enabled=true \
+	  --set httpRoute.enabled=true \
+	  --set httpRoute.parentRefs[0].name=render
 
 .PHONY: helm-docs
 helm-docs: ## Regenerate the chart README from values.yaml

@@ -99,7 +99,46 @@ through the environment, so it does not appear in `kubectl describe pod`.
 
 `api.readOnly=true` refuses every state-changing route outright, which is what
 you want for an instance behind a dashboard. The chart refuses to publish an
-unauthenticated write API through an Ingress.
+unauthenticated write API through a Gateway.
+
+## Publishing the API
+
+Outside the cluster, the API is published with a Gateway API HTTPRoute:
+
+```yaml
+httpRoute:
+  enabled: true
+  parentRefs:
+    - name: external
+      namespace: gateway-system
+      sectionName: https
+  hostnames:
+    - sandman.example.com
+  matches:
+    - path:
+        type: PathPrefix
+        value: /api/
+```
+
+`parentRefs` is required — a route with no parent attaches to no Gateway, is
+admitted by nothing, and serves no traffic without ever reporting an error, so
+the chart refuses to render one. For a Gateway in another namespace, that
+Gateway's listener also has to allow routes from this one in its
+`allowedRoutes`; the route naming a parent is only half of the binding.
+
+The Gateway itself is not part of this chart. It is cluster infrastructure with
+its own lifecycle, usually shared between releases, and TLS and the listener's
+hostnames belong to it rather than here — which is the main practical
+difference from the Ingress this replaced.
+
+The default `matches` publishes `/`, which is the whole surface: the API, the
+landing page, `/healthz`, `/readyz` and `/metrics`. A prefix of `/api/`
+publishes only the API and leaves the probes and metrics reachable inside the
+cluster alone. Set `httpRoute.rules` to replace the generated rule entirely if
+you need something the single-rule shape cannot express.
+
+`httpRoute.apiVersion` defaults to `gateway.networking.k8s.io/v1`; set it to
+`v1beta1` for an older Gateway API installation.
 
 ## Privileged shutdown pods
 
@@ -190,15 +229,20 @@ two controllers draining the same node.
 | envFrom | list | `[]` | Extra environment sources for the container. |
 | fullnameOverride | string | `""` | Overrides the full name of the released resources. |
 | hostNetwork | bool | `true` | Host networking. A magic packet is a link-local broadcast: from inside the pod network it reaches the CNI's bridge and stops there. Host networking is what puts it on the network the machines are actually on, so it is on by default -- this chart does not work without it unless every device names a routable directed broadcast address and the network forwards those. |
+| httpRoute.annotations | object | `{}` | Annotations for the HTTPRoute. |
+| httpRoute.apiVersion | string | `"gateway.networking.k8s.io/v1"` | API version of the HTTPRoute. `gateway.networking.k8s.io/v1` is the stable version; older Gateway API installations still serve `v1beta1`. |
+| httpRoute.enabled | bool | `false` | Expose the REST API through a Gateway API HTTPRoute. Think about `api.token` first: the chart refuses to publish a write API that anything reaching the Gateway could use. |
+| httpRoute.filters | list | `[]` | Filters applied to the default rule, for header manipulation, redirects or a URL rewrite. |
+| httpRoute.hostnames | list | `[]` | Hostnames this route answers on. Empty inherits whatever the Gateway listener allows, which for a shared Gateway is usually not what you want. |
+| httpRoute.labels | object | `{}` | Extra labels for the HTTPRoute. |
+| httpRoute.matches | list | `[{"path":{"type":"PathPrefix","value":"/"}}]` | Matches for the default rule. The API lives under /api/v1, so a prefix of / also publishes the landing page, the probes and /metrics; narrow this to /api/ to publish only the API. |
+| httpRoute.parentRefs | list | `[]` | Gateways this route attaches to. Required when enabled: a route with no parent is attached to no Gateway, is admitted by nothing, and serves no traffic without ever reporting an error. `namespace` is only needed for a Gateway outside the release namespace, and that Gateway must allow routes from this one in its `allowedRoutes`. |
+| httpRoute.rules | list | `[]` | Complete rule list, replacing the default rule built from `matches`, `filters` and `timeouts`. Use this for anything the single-rule shape cannot express; `backendRefs` then has to name the Service itself. |
+| httpRoute.timeouts | object | `{}` | Timeouts for the default rule. A start or stop request returns as soon as it is recorded, so these only ever cover a cache read or a single patch. |
 | image.pullPolicy | string | `"IfNotPresent"` | Image pull policy. |
 | image.repository | string | `"ghcr.io/hauke-cloud/sandman"` | Container image repository. |
 | image.tag | string | `""` | Image tag. Empty uses the chart's appVersion. |
 | imagePullSecrets | list | `[]` | Secrets for pulling the image from a private registry. |
-| ingress.annotations | object | `{}` | Annotations for the Ingress. |
-| ingress.className | string | `""` | Ingress class. |
-| ingress.enabled | bool | `false` | Expose the REST API through an Ingress. Think about `api.token` first. |
-| ingress.hosts | list | `[{"host":"sandman.local","paths":[{"path":"/","pathType":"Prefix"}]}]` | Hosts and paths. |
-| ingress.tls | list | `[]` | TLS configuration. |
 | livenessProbe | object | `{"httpGet":{"path":"/healthz","port":"http"},"initialDelaySeconds":5,"periodSeconds":30}` | Liveness probe. It does not depend on the cluster or on any machine: restarting sandman cannot fix an unreachable node, it would only interrupt the transitions in flight. |
 | metrics.grafanaDashboard.annotations | object | `{}` | Extra annotations for the ConfigMap. The folder annotation is added automatically when `folder` is set. |
 | metrics.grafanaDashboard.enabled | bool | `false` | Create a ConfigMap holding the Grafana dashboard, labelled `grafana_dashboard: "1"` for the grafana-k8s-sidecar. |

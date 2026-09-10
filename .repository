@@ -1,9 +1,9 @@
 ---
-title: Sandman
-description: Wake-on-LAN and graceful shutdown for Kubernetes nodes
+title: sandman
+description: Wake-on-LAN and graceful shutdown for Kubernetes nodes, with a REST API, Prometheus metrics, alerting rules and a Grafana dashboard.
 logo: ""
 docker_image_registry: "ghcr.io"
 docker_image_namespace: "hauke-cloud/sandman"
 docker_image_version: "latest"
-helm_repository: "https://hauke-cloud.github.io/helm-charts"
+helm_repository: "oci://ghcr.io/hauke-cloud/charts"
 helm_chart: "sandman"
