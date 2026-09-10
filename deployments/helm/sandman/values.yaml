@@ -1,0 +1,297 @@
+# -- Number of replicas. A second replica is a warm standby, not extra
+# throughput: only the leader acts on devices, and both serve the API.
+replicaCount: 1
+
+image:
+  # -- Container image repository.
+  repository: ghcr.io/hauke-cloud/sandman
+  # -- Image pull policy.
+  pullPolicy: IfNotPresent
+  # -- Image tag. Empty uses the chart's appVersion.
+  tag: ""
+
+# -- Secrets for pulling the image from a private registry.
+imagePullSecrets: []
+# -- Overrides the chart name used in resource names.
+nameOverride: ""
+# -- Overrides the full name of the released resources.
+fullnameOverride: ""
+
+crds:
+  # -- Let sandman apply its own CustomResourceDefinition at start-up. This is
+  # the default because a chart's `crds/` directory is installed once and never
+  # upgraded -- Helm refuses to touch a CRD on `helm upgrade` -- so a
+  # chart-installed CRD drifts behind the controller and fields start
+  # disappearing silently. Applying it from the binary keeps the schema and the
+  # code that reads it in step.
+  install: true
+  # -- Grant the RBAC needed for that. Turning this off while `install` is on
+  # makes sandman fail at start-up with a message saying exactly that.
+  rbac: true
+
+api:
+  # -- Bearer token required on every API route. Empty leaves the API open to
+  # anything that can reach the Service -- which, for an API that turns
+  # machines off, is worth thinking about even inside a cluster. Stored in a
+  # Secret this chart creates and mounted as a file, so it never appears in the
+  # pod's environment.
+  token: ""
+  # -- Name of an existing Secret holding the token. Set this and `token` is
+  # ignored.
+  existingSecret: ""
+  # -- Key inside the Secret that holds the token.
+  secretKey: token
+  # -- Refuse every request that would change a machine's power state. Reads
+  # keep working. Useful for an instance exposed to a dashboard.
+  readOnly: false
+
+controller:
+  # -- Elect one replica to act on devices. Leave this on: two replicas
+  # draining the same node is not something to find out about later.
+  leaderElection: true
+  # -- Name of the leader election lease.
+  leaderElectionID: sandman.hauke.cloud
+  # -- Local address magic packets are sent from. Empty lets the kernel choose,
+  # which is right on a host with one network. On a host with several -- a
+  # node with a storage network, or a second NIC facing the machines -- name
+  # the address on the network the machines are on, or the packets leave by the
+  # wrong door.
+  wolSourceAddress: ""
+  # -- Log level: debug, info, warn or error.
+  logLevel: info
+  # -- Log format: text or json.
+  logFormat: json
+
+shutdown:
+  # -- Namespace the privileged shutdown pods are created in. Empty uses the
+  # release namespace. That namespace must allow privileged pods, so a
+  # dedicated one is often tidier than relaxing Pod Security on the namespace
+  # everything else runs in.
+  namespace: ""
+  # -- Create that namespace, labelled for the privileged Pod Security
+  # standard. Only meaningful when `namespace` is set to something other than
+  # the release namespace.
+  createNamespace: false
+
+# -- Host networking. A magic packet is a link-local broadcast: from inside the
+# pod network it reaches the CNI's bridge and stops there. Host networking is
+# what puts it on the network the machines are actually on, so it is on by
+# default -- this chart does not work without it unless every device names a
+# routable directed broadcast address and the network forwards those.
+hostNetwork: true
+
+# -- DNS policy. With host networking, ClusterFirstWithHostNet keeps cluster
+# DNS working; the API server itself is reached by IP, so this only matters for
+# anything else the pod resolves.
+dnsPolicy: ClusterFirstWithHostNet
+
+serviceAccount:
+  # -- Create a ServiceAccount for the pod.
+  create: true
+  # -- Mount the ServiceAccount token. Required: sandman talks to the
+  # Kubernetes API for everything it does.
+  automount: true
+  # -- Annotations for the ServiceAccount.
+  annotations: {}
+  # -- Name of the ServiceAccount. Empty generates one from the fullname.
+  name: ""
+
+rbac:
+  # -- Create the ClusterRole and binding sandman needs.
+  create: true
+
+service:
+  # -- Service type.
+  type: ClusterIP
+  # -- Service port. With host networking this is also the port on the host.
+  port: 8080
+  # -- Annotations for the Service.
+  annotations: {}
+
+ingress:
+  # -- Expose the REST API through an Ingress. Think about `api.token` first.
+  enabled: false
+  # -- Ingress class.
+  className: ""
+  # -- Annotations for the Ingress.
+  annotations: {}
+  # -- Hosts and paths.
+  hosts:
+    - host: sandman.local
+      paths:
+        - path: /
+          pathType: Prefix
+  # -- TLS configuration.
+  tls: []
+
+# -- SandmanDevices to create with the release. Handy for a small fleet
+# described in one values file; a larger one is usually better off with the
+# devices in their own manifests. Every field of the CRD is accepted here.
+devices: []
+#  - name: worker-01
+#    nodeRef:
+#      name: worker-01
+#    desiredPowerState: Unmanaged
+#    wakeOnLAN:
+#      macAddress: "aa:bb:cc:dd:ee:ff"
+#      broadcastAddress: "192.168.1.255"
+#    drain:
+#      enabled: true
+
+# -- Extra annotations for the pod.
+podAnnotations: {}
+# -- Extra labels for the pod.
+podLabels: {}
+
+# -- Pod-level security context. The sandman pod itself is unprivileged; the
+# only privileged thing in this chart is the short-lived shutdown pod it
+# creates on a node that is being stopped.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+# -- Container-level security context. The image is a single static binary that
+# writes nothing, so it runs read-only with no capabilities. Broadcasting a
+# magic packet needs none: the kernel sets SO_BROADCAST on ordinary UDP
+# sockets.
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# -- Resource requests and limits. sandman holds a device per machine and a
+# node per machine in memory and does nothing between requests. No CPU limit is
+# set on purpose: throttling a controller only delays the reconcile that
+# notices a machine has come back.
+resources:
+  requests:
+    cpu: 10m
+    memory: 64Mi
+  limits:
+    memory: 256Mi
+
+# -- Liveness probe. It does not depend on the cluster or on any machine:
+# restarting sandman cannot fix an unreachable node, it would only interrupt
+# the transitions in flight.
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 30
+
+# -- Readiness probe. Fails until the device cache has synced, because an
+# unsynced cache answers "no devices" rather than "not ready".
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: http
+  initialDelaySeconds: 2
+  periodSeconds: 10
+
+# -- Startup probe, allowing time for the CRD to be applied and established.
+startupProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  periodSeconds: 5
+  failureThreshold: 24
+
+# -- Extra environment variables for the container.
+env: []
+# -- Extra environment sources for the container.
+envFrom: []
+
+# -- Node selector for the pod. Worth setting: sandman has to run on a machine
+# that is on the same network as the ones it wakes, and that is not going to be
+# switched off by sandman itself.
+nodeSelector: {}
+# -- Tolerations for the pod.
+tolerations: []
+# -- Affinity rules for the pod.
+affinity: {}
+# -- Deployment update strategy. Recreate keeps a host port from colliding
+# during a rollout, which matters because host networking is the default.
+strategy:
+  type: Recreate
+# -- Grace period for shutdown. sandman finishes in-flight requests and stops;
+# the transitions it was driving are picked up from the cluster by whatever
+# starts next.
+terminationGracePeriodSeconds: 30
+
+# -- PodDisruptionBudget for the controller.
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+
+metrics:
+  serviceMonitor:
+    # -- Create a ServiceMonitor scraping /metrics. Requires the
+    # monitoring.coreos.com CRDs.
+    enabled: false
+    # -- Namespace the ServiceMonitor is created in. Empty uses the release
+    # namespace. Prometheus often watches other namespaces, so point this at
+    # its own when the Service is scraped from a different one.
+    namespace: ""
+    # -- How often Prometheus scrapes /metrics. Scraping reads the controller's
+    # own cache and touches neither the cluster nor a machine, so a short
+    # interval costs nothing -- and a boot takes a minute or two, which is not
+    # many samples at a slow one.
+    interval: 30s
+    # -- Give up on a scrape after this long.
+    scrapeTimeout: 10s
+    # -- Extra labels for the ServiceMonitor. Prometheus instances commonly
+    # select on a label like `release: prometheus`, which belongs here.
+    labels: {}
+    # -- Annotations for the ServiceMonitor.
+    annotations: {}
+    # -- Metric relabeling rules applied to the scrape.
+    metricRelabelings: []
+    # -- Relabeling rules applied to the scrape targets.
+    relabelings: []
+  prometheusRule:
+    # -- Create a PrometheusRule with a default set of alerts. Requires the
+    # monitoring.coreos.com CRDs.
+    enabled: false
+    # -- Namespace the PrometheusRule is created in. Empty uses the release
+    # namespace.
+    namespace: ""
+    # -- Extra labels for the PrometheusRule.
+    labels: {}
+    # -- Annotations for the PrometheusRule.
+    annotations: {}
+    # -- Alerting rules. Empty uses the chart's defaults, which match on the
+    # `service` label the Prometheus Operator derives from this chart's
+    # Service, so they work regardless of the scrape's job name.
+    rules: []
+    # -- How long a device may sit in a transition before it is alerted on.
+    # The controller's own timeouts declare a transition failed first; this is
+    # the backstop for a sandman that has stopped reconciling at all.
+    stuckFor: 20m
+    # -- How long a machine may be off while something is asking for it to be
+    # on before that is alerted on.
+    unexpectedlyOffFor: 10m
+    # -- Rate of failed wake attempts, per second, above which the network
+    # path to the machines is treated as broken.
+    wakeFailureRate: 0.05
+  grafanaDashboard:
+    # -- Create a ConfigMap holding the Grafana dashboard, labelled
+    # `grafana_dashboard: "1"` for the grafana-k8s-sidecar.
+    enabled: false
+    # -- Namespace the dashboard ConfigMap is created in. Empty uses the
+    # release namespace.
+    namespace: ""
+    # -- Grafana folder the sidecar imports the dashboard into. Requires the
+    # sidecar's folder feature to be enabled.
+    folder: ""
+    # -- Extra labels for the ConfigMap.
+    labels: {}
+    # -- Extra annotations for the ConfigMap. The folder annotation is added
+    # automatically when `folder` is set.
+    annotations: {}

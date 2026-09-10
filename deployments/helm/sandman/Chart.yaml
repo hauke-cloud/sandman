@@ -1,0 +1,36 @@
+apiVersion: v2
+name: sandman
+description: Wake-on-LAN and graceful shutdown for Kubernetes nodes, with a REST API, Prometheus metrics, alerting rules and a Grafana dashboard.
+type: application
+# version is managed by CI (svu). This is only a sensible default for local packaging.
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - wake-on-lan
+  - wol
+  - power
+  - power-management
+  - node
+  - baremetal
+  - homelab
+  - energy
+  - prometheus
+  - operator
+home: https://github.com/hauke-cloud/sandman
+sources:
+  - https://github.com/hauke-cloud/sandman
+maintainers:
+  - name: Hauke Mettendorf
+    email: hauke@mettendorf.it
+annotations:
+  artifacthub.io/license: GPL-3.0-only
+  artifacthub.io/prerelease: "false"
+  artifacthub.io/operator: "true"
+  # The CRD is applied by the controller at start-up rather than shipped in
+  # crds/, so that it is always the version the running binary understands.
+  artifacthub.io/crds: |
+    - kind: SandmanDevice
+      version: v1alpha1
+      name: sandmandevices.sandman.hauke.cloud
+      displayName: Sandman Device
+      description: A physical machine behind a Kubernetes node, and how to turn it on and off.

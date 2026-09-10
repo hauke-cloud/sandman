@@ -1,0 +1,104 @@
+---
+# The smallest useful device: a machine, its MAC address, and the node it
+# registers as. It is created Unmanaged, so sandman reports its state and does
+# not touch it until something asks.
+apiVersion: sandman.hauke.cloud/v1alpha1
+kind: SandmanDevice
+metadata:
+  name: worker-01
+spec:
+  nodeRef:
+    name: worker-01
+  wakeOnLAN:
+    macAddress: "aa:bb:cc:dd:ee:ff"
+    # The limited broadcast address only reaches the sender's own link, which
+    # is why sandman runs with host networking. A subnet's directed broadcast
+    # address reaches another segment, if the router in between forwards it.
+    broadcastAddress: "192.168.1.255"
+---
+# A machine that is meant to be running, spelled out in full.
+apiVersion: sandman.hauke.cloud/v1alpha1
+kind: SandmanDevice
+metadata:
+  name: worker-02
+spec:
+  description: The loud one under the stairs
+  nodeRef:
+    name: worker-02
+  # Written here, this is a declaration: sandman keeps the machine running, and
+  # starts it again if it goes down on its own. The REST API writes the same
+  # field when it is asked to start something.
+  #
+  # Running, Stopped or Unmanaged -- not On and Off, because YAML reads both of
+  # those as booleans and the API server would reject them.
+  desiredPowerState: Running
+  wakeOnLAN:
+    macAddress: "aa:bb:cc:dd:ee:00"
+    broadcastAddress: "192.168.1.255"
+    port: 9
+    # UDP broadcast is unreliable and a sleeping NIC may miss one.
+    packets: 3
+    packetInterval: 200ms
+    # Some NICs will only wake on a packet carrying a six-byte password.
+    secureOnSecretRef:
+      name: worker-02-secure-on
+      namespace: sandman
+      key: password
+  drain:
+    enabled: true
+    ignoreDaemonSets: true
+    deleteEmptyDirData: true
+    # Off by default: a pod nothing will recreate is lost either way, but
+    # deleting it should be a decision.
+    force: false
+    timeout: 5m
+  shutdown:
+    mode: PrivilegedPod
+    image: busybox:1.37
+    # The default enters PID 1's namespaces and asks the host's systemd to
+    # power off, so the machine runs its own shutdown sequence rather than
+    # having the power cut under a live kernel.
+    command:
+      - nsenter
+      - -t
+      - "1"
+      - -m
+      - -u
+      - -i
+      - -n
+      - -p
+      - --
+      - systemctl
+      - poweroff
+  timeouts:
+    # Long enough for POST, boot and the kubelet's first heartbeat.
+    start: 10m
+    stop: 10m
+    wakeRetryInterval: 1m
+    # How long an unreachable node is given before it counts as off.
+    stoppedGracePeriod: 2m
+---
+# A machine sandman may start but must never stop -- a storage node, or
+# anything whose shutdown is somebody else's decision.
+apiVersion: sandman.hauke.cloud/v1alpha1
+kind: SandmanDevice
+metadata:
+  name: storage-01
+spec:
+  nodeRef:
+    name: storage-01
+  wakeOnLAN:
+    macAddress: "aa:bb:cc:dd:ee:01"
+  shutdown:
+    # A stop request is refused rather than quietly ignored.
+    mode: Disabled
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: worker-02-secure-on
+  namespace: sandman
+type: Opaque
+stringData:
+  # Either six raw bytes or hex, with or without separators.
+  password: "01:02:03:04:05:06"

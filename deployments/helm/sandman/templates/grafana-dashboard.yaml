@@ -1,0 +1,26 @@
+{{- if .Values.metrics.grafanaDashboard.enabled }}
+{{- $annotations := default (dict) .Values.metrics.grafanaDashboard.annotations -}}
+{{- if .Values.metrics.grafanaDashboard.folder -}}
+{{- $annotations = merge $annotations (dict "sidecar.grafana.com/folder" .Values.metrics.grafanaDashboard.folder) -}}
+{{- end -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "sandman.fullname" . }}-grafana-dashboard
+  {{- with .Values.metrics.grafanaDashboard.namespace }}
+  namespace: {{ . }}
+  {{- end }}
+  labels:
+    {{- include "sandman.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+    {{- with .Values.metrics.grafanaDashboard.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with $annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+data:
+  {{ include "sandman.fullname" . }}-dashboard.json: |
+{{ .Files.Get "files/grafana-dashboard.json" | indent 4 }}
+{{- end }}

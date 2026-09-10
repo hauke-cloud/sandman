@@ -1,0 +1,21 @@
+{{- /*
+Devices declared in values. The CRD they use is applied by the controller at
+start-up, not by this chart, so these are annotated to be installed after the
+controller is running -- a post-install hook would be applied before the
+Deployment has ever started, when the type does not exist yet.
+*/ -}}
+{{- range .Values.devices }}
+---
+apiVersion: sandman.hauke.cloud/v1alpha1
+kind: SandmanDevice
+metadata:
+  name: {{ .name }}
+  labels:
+    {{- include "sandman.labels" $ | nindent 4 }}
+  {{- with .annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- omit . "name" "annotations" | toYaml | nindent 2 }}
+{{- end }}

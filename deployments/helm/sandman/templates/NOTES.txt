@@ -1,0 +1,94 @@
+{{ include "sandman.fullname" . }} is running.
+
+The CustomResourceDefinition is applied by sandman itself at start-up, not by
+this chart, so it is always the version the running binary understands. Give it
+a moment, then:
+
+  kubectl get sandmandevices
+
+{{- if .Values.devices }}
+
+{{ len .Values.devices }} device(s) came with this release. They are created against a CRD the
+controller installs, so on a first install they may be rejected until the pod
+has started once -- `helm upgrade` again, or wait for Helm's retry, if you see
+"no matches for kind SandmanDevice".
+{{- else }}
+
+Nothing is managed yet. A device looks like this:
+
+  apiVersion: sandman.hauke.cloud/v1alpha1
+  kind: SandmanDevice
+  metadata:
+    name: worker-01
+  spec:
+    nodeRef:
+      name: worker-01
+    wakeOnLAN:
+      macAddress: "aa:bb:cc:dd:ee:ff"
+      broadcastAddress: "192.168.1.255"
+
+It is created Unmanaged: sandman reports the machine's state and does not touch
+it until something asks it to.
+{{- end }}
+
+The API is served inside the cluster at:
+
+  http://{{ include "sandman.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}
+
+From your machine:
+
+  kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "sandman.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }}
+{{ if or .Values.api.token .Values.api.existingSecret }}
+  TOKEN=$(kubectl --namespace {{ .Release.Namespace }} get secret {{ include "sandman.secretName" . }} -o jsonpath='{.data.{{ .Values.api.secretKey }}}' | base64 -d)
+  curl -H "Authorization: Bearer $TOKEN" localhost:{{ .Values.service.port }}/api/v1/devices
+  curl -H "Authorization: Bearer $TOKEN" -X POST localhost:{{ .Values.service.port }}/api/v1/devices/worker-01/start
+{{- else }}
+  curl localhost:{{ .Values.service.port }}/api/v1/devices
+  curl -X POST localhost:{{ .Values.service.port }}/api/v1/devices/worker-01/start
+{{- end }}
+
+A start returns as soon as the request is recorded. Poll the device until it
+reports Running:
+
+  curl -s localhost:{{ .Values.service.port }}/api/v1/devices/worker-01/status
+
+{{- if not .Values.hostNetwork }}
+
+WARNING: hostNetwork is false. A magic packet is a link-local broadcast, and
+from inside the pod network it will not reach the machines. Every device will
+need a routable directed broadcast address, and the network in between will
+have to forward it -- most do not. Unless you know that is the case, set
+hostNetwork=true.
+{{- end }}
+{{- if and (not .Values.api.token) (not .Values.api.existingSecret) (not .Values.api.readOnly) }}
+
+NOTE: the API has no token, so anything that can reach the Service can turn
+your machines off. Set `api.existingSecret` (or `api.token` for a trial), or
+`api.readOnly=true` if this instance is only ever meant to be looked at.
+{{- end }}
+{{- if and .Values.api.token (not .Values.api.existingSecret) }}
+
+NOTE: the token was taken from `api.token` and written into the Secret
+{{ include "sandman.fullname" . }}. Anyone who can read your values file or run `helm get values` can
+read it. In production point `api.existingSecret` at a Secret managed outside
+the release instead.
+{{- end }}
+{{- if not .Values.metrics.serviceMonitor.enabled }}
+
+NOTE: metrics.serviceMonitor.enabled is false, so nothing is scraping this yet.
+On a Prometheus Operator cluster:
+
+  metrics:
+    serviceMonitor:
+      enabled: true
+      labels:
+        release: prometheus   # whatever your Prometheus selects on
+    prometheusRule:
+      enabled: true
+    grafanaDashboard:
+      enabled: true
+{{- end }}
+
+The privileged shutdown pods land in {{ include "sandman.shutdownNamespace" . }}. That namespace has to
+allow privileged pods -- they share the host's PID namespace to reach its
+systemd -- so if stops fail with an admission error, that is why.

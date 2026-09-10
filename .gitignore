@@ -320,3 +320,8 @@ Desktop.ini
 
 # End of .gitignore
 
+
+# sandman
+/bin/
+coverage.out
+*.tgz

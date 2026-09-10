@@ -1,0 +1,21 @@
+{{- if and .Values.shutdown.createNamespace .Values.shutdown.namespace }}
+{{- if ne .Values.shutdown.namespace .Release.Namespace }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.shutdown.namespace }}
+  labels:
+    {{- include "sandman.labels" . | nindent 4 }}
+    # The shutdown pod is privileged and shares the host's PID namespace.
+    # Keeping it in a namespace of its own means the rest of sandman -- and
+    # everything else in the release namespace -- can stay under a restricted
+    # Pod Security standard.
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/audit: privileged
+    pod-security.kubernetes.io/warn: privileged
+  annotations:
+    # Helm would otherwise delete the namespace on uninstall, taking any
+    # shutdown pod still in flight with it.
+    helm.sh/resource-policy: keep
+{{- end }}
+{{- end }}

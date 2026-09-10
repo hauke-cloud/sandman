@@ -1,0 +1,517 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.22.0
+  name: sandmandevices.sandman.hauke.cloud
+spec:
+  group: sandman.hauke.cloud
+  names:
+    kind: SandmanDevice
+    listKind: SandmanDeviceList
+    plural: sandmandevices
+    shortNames:
+    - sd
+    - sandman
+    singular: sandmandevice
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.nodeRef.name
+      name: Node
+      type: string
+    - jsonPath: .spec.wakeOnLAN.macAddress
+      name: MAC
+      type: string
+    - jsonPath: .spec.desiredPowerState
+      name: Desired
+      type: string
+    - jsonPath: .status.phase
+      name: State
+      type: string
+    - jsonPath: .status.nodeReady
+      name: Ready
+      type: boolean
+    - jsonPath: .status.phaseSince
+      name: Since
+      type: date
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          SandmanDevice is the Schema for the sandmandevices API. It describes one
+          physical machine that backs a Kubernetes node, and how to turn it on and off.
+
+          It is cluster-scoped because a Node is, and because two SandmanDevices in
+          different namespaces pointing at one machine would be two controllers
+          fighting over a power switch.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of SandmanDevice
+            properties:
+              description:
+                description: |-
+                  Description is a free-form note about the machine, echoed by the REST
+                  API. Useful for "the noisy one in the basement".
+                type: string
+              desiredPowerState:
+                default: Unmanaged
+                description: |-
+                  DesiredPowerState is the state sandman drives the machine towards.
+                  Unmanaged observes and reports without ever touching the hardware, which
+                  is the safe default for a device that has just been added.
+                enum:
+                - Running
+                - Stopped
+                - Unmanaged
+                type: string
+              drain:
+                description: Drain governs how workloads are moved off the node before
+                  it is stopped.
+                properties:
+                  cordon:
+                    default: true
+                    description: |-
+                      Cordon marks the node unschedulable before stopping it. This happens
+                      even when Enabled is false, because scheduling onto a machine that is
+                      about to lose power is never right.
+                    type: boolean
+                  deleteEmptyDirData:
+                    default: true
+                    description: |-
+                      DeleteEmptyDirData evicts pods with emptyDir volumes, discarding their
+                      contents. Without it a single scratch volume blocks the whole drain.
+                    type: boolean
+                  enabled:
+                    default: true
+                    description: |-
+                      Enabled evicts pods before the machine is stopped. Turning this off
+                      stops the node with its workloads still on it; they are rescheduled once
+                      the node's grace period expires, which is much slower and much ruder.
+                    type: boolean
+                  force:
+                    default: false
+                    description: |-
+                      Force deletes pods that no controller will recreate. They are lost, but
+                      so they would be when the power goes.
+                    type: boolean
+                  gracePeriodSeconds:
+                    default: -1
+                    description: |-
+                      GracePeriodSeconds overrides each pod's terminationGracePeriodSeconds.
+                      Negative means each pod keeps its own.
+                    format: int64
+                    type: integer
+                  ignoreDaemonSets:
+                    default: true
+                    description: |-
+                      IgnoreDaemonSets proceeds even though DaemonSet pods cannot be evicted.
+                      They are recreated on the next node, so waiting for them never ends.
+                    type: boolean
+                  timeout:
+                    default: 5m
+                    description: |-
+                      Timeout bounds the drain. When it expires the stop is abandoned rather
+                      than forced: a drain that will not finish usually means a PodDisruptionBudget
+                      is being honoured, and powering the machine off anyway would violate it.
+                    type: string
+                  uncordonOnStart:
+                    default: true
+                    description: |-
+                      UncordonOnStart makes the node schedulable again once it comes back.
+                      Without it a machine started by sandman would come up idle.
+                    type: boolean
+                type: object
+              nodeRef:
+                description: |-
+                  NodeRef names the Kubernetes Node this machine registers as. It is the
+                  link between the hardware described here and the workload scheduler's
+                  view of it.
+                properties:
+                  name:
+                    description: |-
+                      Name of the Node object. A stopped machine has no Node object at all, so
+                      this is matched by name rather than resolved once and cached.
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
+              paused:
+                default: false
+                description: |-
+                  Paused stops sandman acting on this device without discarding the
+                  desired state. A paused device reports Pending instead of transitioning,
+                  which is the difference between "hold off" and "never mind".
+                type: boolean
+              shutdown:
+                description: Shutdown describes how to stop the machine.
+                properties:
+                  activeDeadlineSeconds:
+                    default: 120
+                    description: |-
+                      ActiveDeadlineSeconds bounds the shutdown pod's life. The pod is
+                      expected to die with its node, so this only matters when the poweroff
+                      silently does nothing.
+                    format: int64
+                    minimum: 10
+                    type: integer
+                  command:
+                    description: |-
+                      Command overrides the shutdown command. The default enters PID 1's mount
+                      and PID namespaces and asks systemd to power off, which runs the host's
+                      own shutdown sequence -- unmounting filesystems and stopping services --
+                      rather than cutting power under a running kernel.
+                    items:
+                      type: string
+                    type: array
+                  image:
+                    default: busybox:1.37
+                    description: |-
+                      Image is the container image the shutdown pod runs. It needs a shell and
+                      nsenter, both of which busybox has.
+                    type: string
+                  mode:
+                    default: PrivilegedPod
+                    description: Mode selects the shutdown mechanism.
+                    enum:
+                    - PrivilegedPod
+                    - Disabled
+                    type: string
+                  namespace:
+                    description: |-
+                      Namespace is where the shutdown pod is created. Empty means the
+                      namespace sandman runs in. It must permit privileged pods, so it is
+                      worth keeping separate from anything else.
+                    type: string
+                  priorityClassName:
+                    description: |-
+                      PriorityClassName is the priority class of the shutdown pod. A busy node
+                      can be short of resources exactly when it needs to be shut down, and a
+                      preempted poweroff pod means a machine that never turns off. Leave it
+                      empty unless the cluster's admission rules allow the class here: the
+                      system-node-critical class is restricted to kube-system on most
+                      clusters.
+                    type: string
+                  tolerations:
+                    description: |-
+                      Tolerations are added to the shutdown pod. The defaults let it land on a
+                      node that is already cordoned, unreachable or not ready -- which is
+                      exactly the node it has to land on.
+                    items:
+                      description: |-
+                        The pod this Toleration is attached to tolerates any taint that matches
+                        the triple <key,value,effect> using the matching operator <operator>.
+                      properties:
+                        effect:
+                          description: |-
+                            Effect indicates the taint effect to match. Empty means match all taint effects.
+                            When specified, allowed values are NoSchedule, PreferNoSchedule and NoExecute.
+                          type: string
+                        key:
+                          description: |-
+                            Key is the taint key that the toleration applies to. Empty means match all taint keys.
+                            If the key is empty, operator must be Exists; this combination means to match all values and all keys.
+                          type: string
+                        operator:
+                          description: |-
+                            Operator represents a key's relationship to the value.
+                            Valid operators are Exists, Equal, Lt, and Gt. Defaults to Equal.
+                            Exists is equivalent to wildcard for value, so that a pod can
+                            tolerate all taints of a particular category.
+                            Lt and Gt perform numeric comparisons (requires feature gate TaintTolerationComparisonOperators).
+                          type: string
+                        tolerationSeconds:
+                          description: |-
+                            TolerationSeconds represents the period of time the toleration (which must be
+                            of effect NoExecute, otherwise this field is ignored) tolerates the taint. By default,
+                            it is not set, which means tolerate the taint forever (do not evict). Zero and
+                            negative values will be treated as 0 (evict immediately) by the system.
+                          format: int64
+                          type: integer
+                        value:
+                          description: |-
+                            Value is the taint value the toleration matches to.
+                            If the operator is Exists, the value should be empty, otherwise just a regular string.
+                          type: string
+                      type: object
+                    type: array
+                type: object
+              timeouts:
+                description: |-
+                  Timeouts bound how long a transition may take before it is declared
+                  Failed.
+                properties:
+                  start:
+                    default: 10m
+                    description: |-
+                      Start is how long a machine has to register and become Ready after the
+                      first magic packet before the start is declared Failed. It has to cover
+                      POST, boot and the kubelet's first successful heartbeat.
+                    type: string
+                  stop:
+                    default: 10m
+                    description: |-
+                      Stop is how long the whole stop may take: drain, shutdown pod and the
+                      node going away.
+                    type: string
+                  stoppedGracePeriod:
+                    default: 2m
+                    description: |-
+                      StoppedGracePeriod is how long the node has to disappear or go
+                      unreachable after the shutdown command before sandman concludes the
+                      machine is off. A node's Ready condition goes stale rather than false
+                      when the kubelet dies with the machine, so this is the delay before an
+                      unreachable node counts as stopped.
+                    type: string
+                  wakeRetryInterval:
+                    default: 1m
+                    description: |-
+                      WakeRetryInterval is how often the magic packet is resent while a start
+                      is in flight. A packet sent while the NIC is still settling after a
+                      previous shutdown is simply dropped, so repeating is what makes a start
+                      reliable.
+                    type: string
+                type: object
+              wakeOnLAN:
+                description: WakeOnLAN describes how to start the machine.
+                properties:
+                  broadcastAddress:
+                    default: 255.255.255.255
+                    description: |-
+                      BroadcastAddress is where the packet is sent. The default is the
+                      limited broadcast address, which only reaches the sender's own link --
+                      so the sandman pod normally has to run with host networking. Set this to
+                      a subnet's directed broadcast address (`192.168.1.255`) to reach another
+                      segment, if the router in between forwards those.
+                    type: string
+                  macAddress:
+                    description: |-
+                      MACAddress is the hardware address of the interface listening for magic
+                      packets. Both `aa:bb:cc:dd:ee:ff` and `aa-bb-cc-dd-ee-ff` are accepted.
+                    pattern: ^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$
+                    type: string
+                  packetInterval:
+                    default: 200ms
+                    description: PacketInterval is the gap between those packets.
+                    type: string
+                  packets:
+                    default: 3
+                    description: |-
+                      Packets is how many identical magic packets are sent per attempt. UDP
+                      broadcast is unreliable and a sleeping NIC may miss one, so sending a
+                      few costs nothing and is what everyone does.
+                    format: int32
+                    maximum: 16
+                    minimum: 1
+                    type: integer
+                  port:
+                    default: 9
+                    description: |-
+                      Port is the UDP port the packet is sent to. Nothing listens on it -- the
+                      NIC matches the payload, not the port -- but 9 and 7 are conventional
+                      and firewalls tend to be written in terms of them.
+                    format: int32
+                    maximum: 65535
+                    minimum: 1
+                    type: integer
+                  secureOnSecretRef:
+                    description: |-
+                      SecureOnSecretRef points at a Secret holding a SecureOn password: six
+                      bytes appended to the magic packet, which some NICs require. The value
+                      may be written as hex (`aa:bb:cc:dd:ee:ff`) or as six raw bytes.
+                    properties:
+                      key:
+                        default: password
+                        description: Key inside the Secret.
+                        type: string
+                      name:
+                        description: Name of the Secret.
+                        type: string
+                      namespace:
+                        description: Namespace of the Secret. Defaults to the namespace
+                          sandman runs in.
+                        type: string
+                    required:
+                    - name
+                    type: object
+                required:
+                - macAddress
+                type: object
+            required:
+            - nodeRef
+            - wakeOnLAN
+            type: object
+          status:
+            description: status defines the observed state of SandmanDevice
+            properties:
+              address:
+                description: |-
+                  Address is an address of the node, taken from its status. It is recorded
+                  while the node is up so that a later start can aim a directed broadcast
+                  at the right subnet.
+                type: string
+              conditions:
+                description: Conditions represent the current state of the SandmanDevice.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              lastRequestID:
+                description: |-
+                  LastRequestID is the request id the controller last acted on. A device
+                  whose annotation carries a different id has an unhandled request, even
+                  when its desired state is unchanged.
+                type: string
+              lastShutdownTime:
+                description: LastShutdownTime is when the shutdown command was last
+                  issued.
+                format: date-time
+                type: string
+              lastStartedTime:
+                description: |-
+                  LastStartedTime and LastStoppedTime are when the machine last settled
+                  into each state.
+                format: date-time
+                type: string
+              lastStoppedTime:
+                format: date-time
+                type: string
+              lastWakeTime:
+                description: LastWakeTime is when the last magic packet was sent.
+                format: date-time
+                type: string
+              message:
+                description: Message describes the current phase in human terms.
+                type: string
+              nodeFound:
+                description: |-
+                  NodeFound reports whether the referenced Node object exists. A machine
+                  that is off usually has none.
+                type: boolean
+              nodeReady:
+                description: NodeReady mirrors the Node's Ready condition. Nil when
+                  there is no node.
+                type: boolean
+              observedGeneration:
+                description: ObservedGeneration is the spec generation this status
+                  was computed from.
+                format: int64
+                type: integer
+              phase:
+                default: Unknown
+                description: Phase is the machine's observed power state.
+                enum:
+                - Unknown
+                - Pending
+                - Starting
+                - Running
+                - Stopping
+                - Stopped
+                - Failed
+                type: string
+              phaseSince:
+                description: |-
+                  PhaseSince is when the current phase was entered. Transitions are
+                  declared failed relative to this.
+                format: date-time
+                type: string
+              reason:
+                description: Reason is a machine-readable reason for the current phase.
+                type: string
+              shutdownPod:
+                description: ShutdownPod names the privileged pod carrying out the
+                  current stop.
+                type: string
+              unschedulable:
+                description: Unschedulable mirrors the Node's cordon state.
+                type: boolean
+              wakeAttempts:
+                description: |-
+                  WakeAttempts counts the magic packets sent during the transition in
+                  flight. It resets when a start finishes.
+                format: int32
+                type: integer
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

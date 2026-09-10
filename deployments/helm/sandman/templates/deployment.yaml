@@ -1,0 +1,142 @@
+{{- include "sandman.validateValues" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sandman.fullname" . }}
+  labels:
+    {{- include "sandman.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  {{- with .Values.strategy }}
+  strategy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "sandman.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        {{- if and .Values.api.token (not .Values.api.existingSecret) }}
+        # Roll the pod when the token changes; it is read once at start-up.
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- end }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "sandman.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "sandman.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automount }}
+      # A magic packet is a link-local broadcast. From inside the pod network it
+      # reaches the CNI bridge and goes no further, so sandman shares the host's
+      # network to put it on the wire the machines are on.
+      hostNetwork: {{ .Values.hostNetwork }}
+      dnsPolicy: {{ .Values.dnsPolicy }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          env:
+            - name: LISTEN_ADDRESS
+              value: ":{{ .Values.service.port }}"
+            # The namespace comes from the pod itself rather than from a value,
+            # so it cannot disagree with where the pod actually is.
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: INSTALL_CRDS
+              value: {{ .Values.crds.install | quote }}
+            - name: LEADER_ELECTION
+              value: {{ .Values.controller.leaderElection | quote }}
+            - name: LEADER_ELECTION_ID
+              value: {{ .Values.controller.leaderElectionID | quote }}
+            - name: API_READ_ONLY
+              value: {{ .Values.api.readOnly | quote }}
+            {{- if or .Values.api.token .Values.api.existingSecret }}
+            # Read from a mounted file rather than the environment, so it stays
+            # out of `kubectl describe pod`.
+            - name: API_TOKEN_FILE
+              value: {{ include "sandman.tokenFile" . | quote }}
+            {{- end }}
+            {{- with .Values.controller.wolSourceAddress }}
+            - name: WOL_SOURCE_ADDRESS
+              value: {{ . | quote }}
+            {{- end }}
+            - name: LOG_LEVEL
+              value: {{ .Values.controller.logLevel | quote }}
+            - name: LOG_FORMAT
+              value: {{ .Values.controller.logFormat | quote }}
+            {{- with .Values.env }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with .Values.envFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.startupProbe }}
+          startupProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if or .Values.api.token .Values.api.existingSecret }}
+          volumeMounts:
+            - name: token
+              mountPath: {{ include "sandman.tokenMountPath" . | quote }}
+              readOnly: true
+          {{- end }}
+      {{- if or .Values.api.token .Values.api.existingSecret }}
+      volumes:
+        - name: token
+          secret:
+            secretName: {{ include "sandman.secretName" . }}
+            defaultMode: 0400
+            items:
+              - key: {{ .Values.api.secretKey }}
+                path: token
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

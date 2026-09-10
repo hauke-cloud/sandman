@@ -1,9 +1,9 @@
 ---
-title: Template Repository
-description: Template repository for hauke.cloud projects
+title: Sandman
+description: Wake-on-LAN and graceful shutdown for Kubernetes nodes
 logo: ""
-docker_image_registry: "ghrc.io"
-docker_image_namespace: "hauke-cloud/example"
+docker_image_registry: "ghcr.io"
+docker_image_namespace: "hauke-cloud/sandman"
 docker_image_version: "latest"
 helm_repository: "https://hauke-cloud.github.io/helm-charts"
-helm_chart: "example"
+helm_chart: "sandman"

@@ -1,0 +1,92 @@
+{{- if .Values.rbac.create }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "sandman.fullname" . }}
+  labels:
+    {{- include "sandman.labels" . | nindent 4 }}
+rules:
+  # The devices themselves.
+  - apiGroups: ["sandman.hauke.cloud"]
+    resources: ["sandmandevices"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["sandman.hauke.cloud"]
+    resources: ["sandmandevices/status"]
+    verbs: ["get", "update", "patch"]
+  # Nodes are read to work out whether a machine is up, and patched to cordon
+  # and uncordon them. No delete: a node object outliving its machine is
+  # sandman's evidence that the machine is off, and removing it is the cluster's
+  # decision, not sandman's.
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch", "patch"]
+  # Pods are listed to drain a node, and created to power one off.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  # Eviction rather than deletion, so that PodDisruptionBudgets are honoured.
+  - apiGroups: [""]
+    resources: ["pods/eviction"]
+    verbs: ["create"]
+  # SecureOn passwords. Read only, and only the Secret a device names.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+  {{- if .Values.crds.rbac }}
+  # sandman applies its own CustomResourceDefinition at start-up. Drop this by
+  # setting crds.install=false and installing the CRD out of band.
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "sandman.fullname" . }}
+  labels:
+    {{- include "sandman.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "sandman.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "sandman.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+# Leader election is namespaced, so it gets a Role rather than a ClusterRole.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "sandman.fullname" . }}-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "sandman.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "sandman.fullname" . }}-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "sandman.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "sandman.fullname" . }}-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "sandman.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

@@ -1,0 +1,59 @@
+---
+name: CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+    tags: ["v*"]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  GO_VERSION: "1.27"
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+
+    steps:
+      - name: Build, Test, and Release
+        uses: hauke-cloud/inpacken-un-af-dor-mit@v1
+        with:
+          # Language
+          language: "go"
+          language-version: ${{ env.GO_VERSION }}
+
+          # Container Build
+          dockerfile-path: "./Dockerfile"
+          docker-context: "."
+          platforms: "linux/amd64,linux/arm64"
+
+          # Registry
+          registry: "ghcr.io"
+          registry-password: ${{ secrets.GITHUB_TOKEN }}
+          image-name: ${{ github.repository }}
+
+          # Helm
+          enable-helm: "true"
+          helm-chart-path: "./deployments/helm"
+          helm-chart-name: "sandman"
+
+          # Testing
+          run-tests: "true"
+          test-command: "go test -v -race -coverprofile=coverage.out -covermode=atomic ./..."
+          enable-coverage: "true"
+
+          # Linting. The action splices `lint-command` verbatim into an
+          # `if [ -n "..." ]` test before running it, so anything with quotes
+          # or a `$(...)` in it breaks there. Hence a bare `make` target, which
+          # also keeps CI and a local `make ci-lint` running the same checks.
+          run-lint: "true"
+          lint-command: "make ci-lint"
+
+          # Release
+          enable-release: "true"
+          release-draft: "false"
