@@ -1,0 +1,88 @@
+name: OpenTofu with tofuenv
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+      - "feature/*"
+
+  pull_request:
+    branches:
+      - main
+      - dev
+      - "feature/*"
+
+  workflow_dispatch:
+
+jobs:
+  opentofu:
+    name: Deploy OpenTofu
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up OpenTofu with tofuenv
+        uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: latest
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-central-1
+
+      - name: Install tflint
+        run: |
+          curl -s https://raw.githubusercontent.com/terraform-linters/tflint/master/install_linux.sh | bash
+
+      - name: OpenTofu Version Check
+        run: tofu version
+
+      - name: OpenTofu Format Check
+        id: fmt
+        run: tofu fmt -check -diff
+
+      - name: OpenTofu Init
+        id: init
+        run: tofu init
+
+      - name: OpenTofu Validate
+        id: validate
+        run: tofu validate
+
+      - name: OpenTofu Plan
+        id: plan
+        run: tofu plan -out=tfplan
+
+      - name: OpenTofu Plan (Show Details)
+        if: ${{ steps.plan.outputs.success == 'true' }}
+        run: tofu show -json tfplan | jq -r '.resource_changes[] | select(.change.actions | index("no-op") | not)'
+
+      - name: Lint OpenTofu Files
+        id: lint
+        run: tflint --config .tflint.hcl
+
+      - name: OpenTofu Apply (Main Branch)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: tofu apply -auto-approve tfplan
+
+      - name: OpenTofu Apply (Dev Branch)
+        if: github.ref == 'refs/heads/dev' && github.event_name == 'push'
+        run: tofu apply -auto-approve tfplan
+
+      - name: Comment on PR with OpenTofu Plan
+        if: github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          path: tfplan
+          header: "OpenTofu Plan"
