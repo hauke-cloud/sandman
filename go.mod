@@ -3,7 +3,7 @@ module github.com/hauke-cloud/sandman
 go 1.27.0
 
 require (
-	github.com/go-logr/logr v1.4.3
+	github.com/go-logr/logr v1.4.4
 	github.com/google/uuid v1.6.0
 	github.com/prometheus/client_golang v1.24.1
 	k8s.io/api v0.37.0
