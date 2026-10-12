@@ -1,31 +1,121 @@
+<!-- llm-readme-management spec=1 commit=857bfb11639b5af244ce0478f8f0b24602658be8 template=terraform model=qwen3.8-27b-q4 digest=f68682b55584 generated=2026-10-12T11:40:40Z -->
 <a href="https://hauke.cloud" target="_blank"><img src="https://img.shields.io/badge/home-hauke.cloud-brightgreen" alt="hauke.cloud" style="display: block;" /></a>
 <a href="https://github.com/hauke-cloud" target="_blank"><img src="https://img.shields.io/badge/github-hauke.cloud-blue" alt="hauke.cloud Github Organisation" style="display: block;" /></a>
-<a href="https://github.com/hauke-cloud/readme-management" target="_blank"><img src="https://img.shields.io/badge/template-default-orange" alt="Repository type - default" style="display: block;" /></a>
+<a href="https://github.com/hauke-cloud/llm-readme-management" target="_blank"><img src="https://img.shields.io/badge/template-terraform-orange" alt="Repository type - terraform" style="display: block;" /></a>
 
 
-# Sandman
+# sandman
 
 
 <img src="https://raw.githubusercontent.com/hauke-cloud/.github/main/resources/img/organisation-logo-small.png" alt="hauke.cloud logo" width="109" height="123" align="right">
 
 
-Wake-on-LAN and graceful shutdown for Kubernetes nodes, shipped with an OCI
-image and a Helm chart carrying Prometheus metrics, alerting rules and a Grafana
-dashboard.
+<llm header hint="Say whether this is a reusable module or a root module that owns real state.">
 
-A cluster of physical machines does not need every machine running all the time.
-Sandman turns them on with a magic packet and off through the kubelet, describes
-each one with a `SandmanDevice` custom resource, and exposes the fleet over a
-small REST API — so "bring worker-03 up for the nightly batch" is one HTTP call
-rather than a trip to the basement.
+A Go service and Helm chart that wakes and powers off the physical machines behind a Kubernetes cluster's nodes via Wake-on-LAN and kubelet-driven shutdown. It is a root deployment, not a reusable module, for you if you operate a small bare-metal or homelab cluster and do not need every machine running all the time.
+
+</llm>
+
+
+## :book: Description
+
+<llm description>
+
+A cluster of physical machines does not need every machine running all the time. Sandman is a Kubernetes controller that powers bare-metal nodes on and off over the network. You describe each machine with a `SandmanDevice` custom resource; the controller handles the rest.
+
+Starting a machine sends Wake-on-LAN magic packets (with optional SecureOn) and retries until the node reports Ready. Stopping a machine cordons it, drains workloads through the eviction API so PodDisruptionBudgets are honoured, then runs `systemctl poweroff` in the host's namespaces via a short-lived privileged pod. A REST API under `/api/v1` lets you issue start, stop, and status requests by device name; it returns immediately and never blocks on hardware.
+
+- Wake-on-LAN start with configurable packet count, retry interval, and SecureOn password
+- Graceful stop: cordon → drain (PDB-aware, never forced) → `systemctl poweroff`
+- REST API with bearer-token authentication and read-only mode
+- Prometheus metrics, alerting rules, and a Grafana dashboard
+- Helm chart at `oci://ghcr.io/hauke-cloud/charts/sandman`
+
+The chart lives in the `hauke-cloud` organisation's OCI registry and is built by the shared `hauke-cloud/inpacken-un-af-dor-mit` CI action.
+
+</llm>
+
+
+## :clipboard: Requirements
+
+<llm requirements hint="Give the Terraform version from .terraform-version and the provider constraints from versions.tf, plus the credentials the providers need.">
+
+- Go 1.27.0 (pinned in `go.mod`)
+- A running Kubernetes cluster and a kubeconfig with the ClusterRole permissions the chart creates (CRD, node, pod, eviction, secret, event, and lease access)
+- A container engine (docker or podman); `docker buildx` for multi-arch image builds
+- `helm` and `kubectl`
+- golangci-lint v2.13.2 and controller-gen v0.22.0 (fetched via `go run`; a Go module proxy is needed for first runs)
+- Terraform 1.9 (`.terraform-version`) or OpenTofu 1.8.0 (`.opentofu-version`) for the deployment workflow template
+- Wake-on-LAN-capable NICs on every target machine, on a network segment reachable from the node running sandman
+- Target hosts running systemd (shutdown invokes `systemctl poweroff`)
+- A namespace that admits privileged pods (Pod Security admission) for the short-lived shutdown pods
+- The `busybox:1.37` image (or your `shutdown.image`) pullable on the nodes being stopped
+- An API token (`api.token` or `api.existingSecret`) if the Service is reachable beyond localhost
+- Optional: Prometheus Operator CRDs (ServiceMonitor, PrometheusRule), grafana-k8s-sidecar, or a Gateway API installation
+
+</llm>
+
 
 ## 🚀 Getting started
+
+<llm getting_started hint="terraform init, plan and apply, with the backend configuration the repository actually uses. Say plainly if apply touches real infrastructure.">
+
+This repository does not contain Terraform or OpenTofu modules. The `.terraform-version` and `.opentofu-version` files are org-template boilerplate; there are no `.tf` files, no state, and no providers. The deployment path is Helm.
+
+1. Clone the repository.
+
+```bash
+git clone https://github.com/hauke-cloud/sandman.git
+cd sandman
+```
+
+2. Install the Helm chart into your cluster. The controller installs its own CRD on first start, so no separate CRD step is needed.
+
+```bash
+helm install sandman oci://ghcr.io/hauke-cloud/charts/sandman --namespace sandman --create-namespace
+```
+
+3. Create a `SandmanDevice` for a physical machine. The examples file documents the required fields (node name, MAC address, desired power state).
+
+```bash
+kubectl apply -f examples/sandmandevice.yaml
+```
+
+4. Forward the API port to your local machine.
+
+```bash
+kubectl -n sandman port-forward svc/sandman 8080:8080
+```
+
+5. Query the device status to confirm the controller is reconciling.
+
+```bash
+curl -s localhost:8080/api/v1/devices/worker-01/status
+```
+
+The API is unauthenticated by default. If the Service is reachable beyond your local port-forward, set `api.token` or `api.existingSecret` in the Helm values before exposing it.
+
+</llm>
+
+
+## :airplane: Usage
+
+<llm usage hint="For a reusable module, the central example is a module block with source, version and the required variables filled in from variables.tf. For a root module, show the workflow instead.">
+
+Once the chart is deployed, you manage physical machines through `SandmanDevice` custom resources and the REST API.
+
+**Install the chart**
 
 ```bash
 helm install sandman oci://ghcr.io/hauke-cloud/charts/sandman \
   --namespace sandman --create-namespace
+```
 
-kubectl apply -f - <<'EOF'
+**Define a device**
+
+Each physical machine gets one cluster-scoped `SandmanDevice`. The minimal spec requires the node name and a Wake-on-LAN MAC address:
+
+```yaml
 apiVersion: sandman.hauke.cloud/v1alpha1
 kind: SandmanDevice
 metadata:
@@ -33,309 +123,103 @@ metadata:
 spec:
   nodeRef:
     name: worker-01
+  desiredPowerState: Running
   wakeOnLAN:
-    macAddress: "aa:bb:cc:dd:ee:ff"
-    broadcastAddress: "192.168.1.255"
-EOF
-
-kubectl get sandmandevices
-# NAME        NODE        MAC                 DESIRED     STATE     READY   SINCE
-# worker-01   worker-01   aa:bb:cc:dd:ee:ff   Unmanaged   Running   true    2m
+    macAddress: "AA:BB:CC:DD:EE:FF"
 ```
 
-Then, through the API:
+Apply it with `kubectl apply -f device.yaml`. The controller sends magic packets to the broadcast address (default `255.255.255.255:9`) and waits for the node to report Ready.
+
+**Control power via the API**
+
+Port-forward the service, then issue start or stop requests. The API returns `202 Accepted` immediately and never blocks on hardware.
 
 ```bash
 kubectl -n sandman port-forward svc/sandman 8080:8080
+```
 
+```bash
 curl -X POST localhost:8080/api/v1/devices/worker-01/stop
-curl -s   localhost:8080/api/v1/devices/worker-01/status
 curl -X POST localhost:8080/api/v1/devices/worker-01/start
+curl -s localhost:8080/api/v1/devices/worker-01/status
 ```
 
-## 🌗 How a machine goes up and down
+A device in the `Failed` phase does not retry on its own; re-issue the same request to re-arm it.
 
-Two very different mechanisms, because a machine that is off and a machine that
-is running have nothing in common from the cluster's point of view.
+</llm>
 
-**Starting is Wake-on-LAN.** A magic packet is six `0xff` bytes followed by the
-target's MAC address sixteen times over. A sleeping NIC scans every frame it
-sees for that pattern and powers the machine up when it matches. Nothing
-acknowledges it, so sandman sends a few, then waits for the node to register and
-report Ready — resending on an interval, because a NIC that is still settling
-after a shutdown quietly drops the first one.
 
-**Stopping is the kubelet.** There is no IPMI here, no BMC, no serial console —
-the one thing sandman can always reach on a *running* node is Kubernetes itself.
-So it cordons the node, drains it through the eviction API so
-PodDisruptionBudgets are honoured, and then schedules a privileged pod onto the
-node that enters PID 1's namespaces and asks the host's systemd to power off:
+## :wrench: Configuration
 
-```
-nsenter -t 1 -m -u -i -n -p -- systemctl poweroff
-```
+<llm configuration hint="A table of the variables in variables.tf: name, type, default, required. Point at variables.tf for the full set and mention outputs.tf if it exists.">
 
-The machine runs its own shutdown sequence — unmounting filesystems, stopping
-services — rather than having the power cut under a live kernel. The pod is
-pinned with `spec.nodeName` rather than scheduled, because by then the node is
-cordoned and no scheduler would put anything there.
+Despite the presence of `.terraform-version` (1.9) and `.opentofu-version` (1.8.0), this repository contains no Terraform or OpenTofu modules. Configuration is resolved in the order CLI flag > environment variable > compiled-in default. The table below covers the binary-level settings; the full list is documented in `.env.example` and implemented in `internal/config/config.go`.
 
-**Noticing it worked** is the subtle part. A machine that loses power does not
-set its node's Ready condition to false; there is nothing left to say so. The
-condition simply stops being refreshed. Sandman therefore treats a node as off
-when the object is gone *or* its Ready heartbeat is older than
-`timeouts.stoppedGracePeriod`.
+| Name | Default | Description |
+|------|---------|-------------|
+| `LISTEN_ADDRESS` | `:8080` | Address the HTTP server binds to (required) |
+| `API_TOKEN` | *(empty)* | Bearer token for the REST API; empty means unauthenticated |
+| `API_TOKEN_FILE` | *(empty)* | Path to a file containing the token; overrides `API_TOKEN` |
+| `API_READ_ONLY` | `false` | Refuse all state-changing routes |
+| `POD_NAMESPACE` | `sandman` | Namespace the controller watches (required) |
+| `INSTALL_CRDS` | `true` | Apply the embedded CRD at startup |
+| `LEADER_ELECTION` | `true` | Enable leader election |
+| `WOL_SOURCE_ADDRESS` | *(empty)* | Egress IP for magic packets on multi-NIC hosts |
+| `LOG_LEVEL` | `info` | Log level: `debug`, `info`, `warn`, `error` |
+| `LOG_FORMAT` | `text` | Log format: `text` or `json` |
 
-## 🔌 States
+Per-device behaviour (wake-on-LAN parameters, drain options, shutdown mode, timeouts) is set on each `SandmanDevice` CR; defaults are declared as kubebuilder markers in `api/v1alpha1/sandmandevice_types.go`. Deployment-level settings (image, RBAC
 
-`GET /api/v1/devices/worker-01/status` reports one of these:
+</llm>
 
-| State | Meaning |
-| --- | --- |
-| `Running` | the node is registered and Ready — the machine is up and working |
-| `Stopped` | no node object, or its heartbeat has gone stale since a shutdown |
-| `Starting` | magic packets have gone out; waiting for the node to appear |
-| `Stopping` | draining, or the shutdown pod is running, or waiting for the node to go |
-| `Pending` | a request is accepted but held — the device is paused |
-| `Failed` | the last transition timed out or errored, and will not be retried on its own |
-| `Unknown` | not observed yet |
 
-`Starting`, `Stopping` and `Pending` come back with `"inFlight": true`, which is
-the signal to keep polling rather than to conclude anything.
+## :hammer: Development
 
-`desiredPowerState` takes `Running`, `Stopped` or `Unmanaged` — the two settled
-states plus "leave it alone", so a spec and a status can be compared by reading
-them. Not `On` and `Off`: YAML reads both of those as booleans, so
-`desiredPowerState: On` would reach the API server as `true` and be rejected.
+<llm development hint="Cover terraform fmt, validate, tflint and terraform-docs where the repository configures them.">
 
-A `Failed` device stays failed on purpose. A machine that ignores magic packets
-needs a person, not a retry loop — and a retry loop is very good at hiding that.
-Asking again through the API clears it: every call writes a fresh request id,
-and an id the controller has not acted on is a new request even when the
-requested state has not changed.
-
-## 🎛 The API
-
-Everything is under `/api/v1`, and everything is addressable by device name or
-by node name — an operator looking at a cluster thinks in nodes, and a device is
-not necessarily named after the node it manages.
-
-| Method | Path | Does |
-| --- | --- | --- |
-| `GET` | `/api/v1/devices` | every device, sorted, with a count per state |
-| `GET` | `/api/v1/devices/{name}` | one device in full |
-| `GET` | `/api/v1/devices/{name}/status` | the same in five fields, for polling |
-| `POST` | `/api/v1/devices/{name}/start` | wake the machine |
-| `POST` | `/api/v1/devices/{name}/stop` | drain and power the machine off |
-| `POST` | `/api/v1/devices/{name}/release` | stop managing it; keep reporting it |
-| `GET` | `/api/v1/nodes/{node}` | the device managing that node |
-| `POST` | `/api/v1/nodes/{node}/start`, `/stop` | the same, by node |
-
-A `POST` takes an optional body, entirely for the record:
+Before pushing, run the full local check:
 
 ```bash
-curl -X POST localhost:8080/api/v1/devices/worker-01/stop \
-  -H 'Content-Type: application/json' \
-  -d '{"requestedBy": "nightly-batch", "reason": "no jobs queued"}'
+make check
 ```
 
-It returns `202 Accepted` immediately. **The API never waits for hardware.** All
-it does is record the desired state on the `SandmanDevice`; the controller
-notices and acts. That is what makes a request survive sandman restarting,
-keeps a caller from holding a connection open across a two-minute boot, and lets
-a second replica serve requests without two controllers fighting over a power
-switch.
+This runs `gofmt -s`, `go vet`, golangci-lint (pinned v2.13.2), the CRD drift check, and `go test -race -count=1 ./...`. CI executes the same lint set via `make ci-lint` and tests with `go test -v -race -coverprofile=coverage.out -covermode=atomic ./...`.
 
-Set a bearer token — `api.token` or, better, `api.existingSecret` — and every
-API route requires it. `/healthz`, `/readyz` and `/metrics` stay open, because
-the kubelet and Prometheus have no token to present.
-
-## 📟 The custom resource
-
-A `SandmanDevice` is cluster-scoped, like the `Node` it points at, and because
-two devices in different namespaces aiming at one machine would be two
-controllers fighting over a power switch.
-
-```yaml
-apiVersion: sandman.hauke.cloud/v1alpha1
-kind: SandmanDevice
-metadata:
-  name: worker-02
-spec:
-  nodeRef:
-    name: worker-02
-  desiredPowerState: Running     # Running | Stopped | Unmanaged
-  wakeOnLAN:
-    macAddress: "aa:bb:cc:dd:ee:00"
-    broadcastAddress: "192.168.1.255"
-    packets: 3
-    packetInterval: 200ms
-    secureOnSecretRef:           # for NICs that want a six-byte password
-      name: worker-02-secure-on
-  drain:
-    enabled: true
-    ignoreDaemonSets: true
-    deleteEmptyDirData: true
-    force: false
-    timeout: 5m
-  shutdown:
-    mode: PrivilegedPod          # or Disabled, to refuse stop requests
-  timeouts:
-    start: 10m
-    stop: 10m
-    wakeRetryInterval: 1m
-    stoppedGracePeriod: 2m
-  paused: false
-```
-
-A new device is `Unmanaged`: sandman reports its state and does not touch it
-until something asks. `desiredPowerState` written here is a declaration —
-sandman will keep the machine in that state and start it again if it goes down
-on its own. The REST API writes the same field.
-
-`paused: true` holds sandman off without discarding the request, which is the
-difference between "hold on" and "never mind". `shutdown.mode: Disabled` makes a
-stop request fail loudly rather than being ignored — right for a storage node
-whose shutdown is somebody else's decision.
-
-See [`examples/sandmandevice.yaml`](examples/sandmandevice.yaml) for the
-annotated long form.
-
-### Where the CRD comes from
-
-Sandman installs its own `CustomResourceDefinition` at start-up, from a copy
-embedded in the binary. The chart does **not** ship it.
-
-That is deliberate. A chart's `crds/` directory is installed once and never
-upgraded — Helm refuses to touch a CRD on `helm upgrade`, because it cannot know
-what would be lost — so a chart-installed CRD drifts behind the controller that
-depends on it, and the symptom is a field the API server silently drops.
-Applying it from the binary binds the schema to the code that understands it.
-
-The cost is one extra permission (`apiextensions.k8s.io/customresourcedefinitions`)
-and one ordering quirk: devices declared in the same release as a first install
-may be rejected until the pod has started once. If your cluster does not allow
-a controller to write CRDs, install it yourself and turn the behaviour off:
+If you change types under `api/v1alpha1/`, regenerate the deepcopy and the embedded CRD before committing:
 
 ```bash
-kubectl apply -f internal/crd/assets/     # or `make install-crds`
-helm install sandman ... --set crds.install=false --set crds.rbac=false
+make generate
+make manifests
 ```
 
-## 🕸 Networking
+`make manifests-check` (part of `ci-lint`) fails the build if `internal/crd/assets/sandman.hauke.cloud_sandmandevices.yaml` has drifted from the Go types.
 
-**Sandman runs with host networking, and needs to.** A magic packet is a
-link-local broadcast: sent from inside the pod network it reaches the CNI bridge
-and stops there. Host networking puts it on the wire the machines are actually
-on.
-
-Two consequences worth knowing about:
-
-- On a host with more than one network — a storage network, a second NIC facing
-  the machines — set `controller.wolSourceAddress` to an address on the
-  machines' network, or the kernel picks an interface and the packet leaves by
-  the wrong door.
-- Because the port is a host port, replicas cannot share a node. The chart
-  refuses `replicaCount > 1` with host networking rather than letting the second
-  pod sit `Pending` forever.
-
-Sandman should also run somewhere it will not switch off underneath itself. A
-`nodeSelector` pinning it to a control-plane node is the usual answer.
-
-## 📊 Metrics
-
-Everything is prefixed `sandman_`. The gauges are read from the controller's
-cache at scrape time, so a deleted device takes its series with it rather than
-freezing at a last value.
-
-| Metric | Description |
-| --- | --- |
-| `sandman_device_power_state` | 1 on the state that applies, per device and state |
-| `sandman_device_desired_power_state` | the same for what was requested |
-| `sandman_device_node_found` / `_node_ready` / `_node_unschedulable` | the cluster's view of the node |
-| `sandman_device_phase_since_timestamp_seconds` | when the current state was entered |
-| `sandman_device_transition_deadline_timestamp_seconds` | when the transition in flight gives up; absent when nothing is in flight |
-| `sandman_device_last_started_` / `_last_stopped_` / `_last_wake_` / `_last_shutdown_timestamp_seconds` | when things last happened |
-| `sandman_device_wake_attempts` | packets sent during the start in flight |
-| `sandman_wake_packets_sent_total` / `sandman_wake_attempts_total` | packets and attempts, by outcome |
-| `sandman_shutdown_attempts_total` | shutdown pods created, by outcome |
-| `sandman_pod_evictions_total` / `sandman_drain_duration_seconds` | what draining cost |
-| `sandman_power_transitions_total` | completed transitions by direction and outcome |
-| `sandman_power_transition_duration_seconds` | how long a start or stop took to settle |
-| `sandman_api_requests_total` / `sandman_api_request_duration_seconds` | REST traffic by route |
-| `sandman_device_collect_failures_total` | 1 when the last scrape could not read the devices |
-| `sandman_build_info` | the running build |
-
-`controller_runtime_*` and `workqueue_*` come along on the same endpoint.
-
-The chart's alerts cover the ones worth waking up for — a device `Failed`, a
-machine `Stopped` while something wants it `On`, magic packets that cannot be
-sent, shutdown pods that cannot be created — and the dashboard shows the fleet,
-a table of every machine, boot durations, and the controller's own loop. Turn
-them on with:
-
-```yaml
-metrics:
-  serviceMonitor:
-    enabled: true
-    labels:
-      release: prometheus   # whatever your Prometheus selects on
-  prometheusRule:
-    enabled: true
-  grafanaDashboard:
-    enabled: true
-```
-
-`sandman_power_transition_duration_seconds{transition="start"}` is the one to
-watch over time: it is honest hardware truth — POST, boot and the kubelet's
-first heartbeat — and it is what tells you whether "wake the machine for the
-batch job" is a ninety-second operation or a five-minute one.
-
-## 🔐 What it can do to your cluster
-
-Worth reading before installing, because the answer is "quite a lot":
-
-- **It creates privileged pods.** One per stop, on the node being stopped, with
-  `hostPID` and `privileged: true`. That is the whole mechanism. They live in
-  `shutdown.namespace` (the release namespace by default), which must allow
-  privileged pods — set `shutdown.namespace` and `shutdown.createNamespace` to
-  keep them out of the namespace everything else runs in.
-- **It evicts pods.** Through the eviction API, so budgets are honoured. A drain
-  that cannot finish is abandoned, never forced: whatever is refusing to move is
-  refusing for a reason, and powering the machine off anyway would override it
-  in the most destructive way available.
-- **It cordons and uncordons nodes.** It never deletes them — a node object
-  outliving its machine is sandman's evidence that the machine is off.
-- **Its own pod is unprivileged**: read-only root filesystem, no capabilities,
-  non-root. Broadcasting needs none of them.
-- **An unauthenticated API can turn your machines off.** Set a token.
-
-## 🛠 Development
+Install the pre-commit hooks after cloning:
 
 ```bash
-make help          # every target
-make check         # fmt, vet, lint, CRD drift check, tests with -race
-make run           # against the cluster in your kubeconfig
-make manifests     # regenerate the embedded CRD after editing api/
-make helm-template # render the chart with everything switched on
+pre-commit install
 ```
 
-The CRD in `internal/crd/assets/` is generated and embedded — there is exactly
-one copy on purpose, and `make ci-lint` fails if it has drifted from the Go
-types in `api/v1alpha1`.
+They run pre-commit-hooks (v4.4.0) and gitleaks (v8.18.0) on every commit. Run them across the whole tree with `pre-commit run --all-files`.
 
-Where things live:
+PR titles are validated by a workflow: the type must be `fix`, `feat`, `docs`, `ci`, or `chore`, and the subject must start with an uppercase letter. A `[WIP]` prefix is accepted.
 
-| Path | What |
-| --- | --- |
-| `api/v1alpha1` | the `SandmanDevice` types, and the defaults the CRD mirrors |
-| `internal/power` | the reconciler: the state machine, draining, shutdown pods |
-| `internal/wol` | magic packets |
-| `internal/server` | the REST API |
-| `internal/metrics` | instruments and the device collector |
-| `internal/crd` | the embedded CRD and its installer |
-| `deployments/helm/sandman` | the chart |
+</llm>
 
-## 📜 License
 
-GPL-3.0-only. See [LICENSE](LICENSE).
+## 📄 License
+
+This Project is licensed under the GNU General Public License v3.0
+
+- see the [LICENSE](LICENSE) file for details.
+
+
+## :coffee: Contributing
+
+To become a contributor, please check out the [CONTRIBUTING](CONTRIBUTING.md) file.
+
+
+## :email: Contact
+
+For any inquiries or support requests, please open an issue in this
+repository or contact us at [contact@hauke.cloud](mailto:contact@hauke.cloud).
